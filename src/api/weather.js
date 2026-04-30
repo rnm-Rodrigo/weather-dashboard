@@ -1,5 +1,22 @@
+// Set cache timeout to 10 minutes (600,000 milliseconds)
+const CACHE_TIMEOUT = 10 * 60 * 1000;
+
 export const getWeatherByCity = async (city) => {
-  // 1. Convert the city name into Latitude & Longitude using Open-Meteo's Geocoding API
+  const cacheKey = `weather_cache_${city.toLowerCase().trim()}`;
+  
+  // 1. Check if we have valid cached data
+  const cachedData = localStorage.getItem(cacheKey);
+  if (cachedData) {
+    const { data, timestamp } = JSON.parse(cachedData);
+    const isExpired = Date.now() - timestamp > CACHE_TIMEOUT;
+    
+    if (!isExpired) {
+      console.log(`Loading ${city} from cache...`);
+      return data;
+    }
+  }
+
+  // 2. Convert the city name into Latitude & Longitude using Open-Meteo's Geocoding API
   const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${city}&count=1&language=en&format=json`);
   const geoData = await geoRes.json();
   
@@ -9,12 +26,11 @@ export const getWeatherByCity = async (city) => {
 
   const location = geoData.results[0];
 
-  // 2. Fetch the rich weather data (Current, Hourly, Daily Forecast, Sunrise/Sunset, UV Index)
-  // Added &hourly=temperature_2m,weather_code and timezone=auto
+  // 3. Fetch the rich weather data
   const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${location.latitude}&longitude=${location.longitude}&current=temperature_2m,relative_humidity_2m,weather_code&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max&timezone=auto`);
   const weatherData = await weatherRes.json();
 
-  // 3. Helper to translate Open-Meteo weather codes into text descriptions and fake OpenWeatherMap IDs (so your background themes still work!)
+  // 4. Helper to translate Open-Meteo weather codes
   const getOWMCode = (wmo) => {
     if (wmo === 0) return { id: 800, desc: "Clear sky" };
     if (wmo === 1 || wmo === 2) return { id: 802, desc: "Partly cloudy" };
@@ -29,8 +45,7 @@ export const getWeatherByCity = async (city) => {
 
   const mappedCode = getOWMCode(weatherData.current.weather_code);
 
-  // 4. Return everything neatly packaged for the WeatherCard
-  return {
+  const finalResult = {
     name: location.name,
     country: location.country_code,
     weather: [{ id: mappedCode.id, description: mappedCode.desc }],
@@ -38,8 +53,15 @@ export const getWeatherByCity = async (city) => {
       temp: weatherData.current.temperature_2m,
       humidity: weatherData.current.relative_humidity_2m,
     },
-    // NEW: We are passing the hourly data down to your card!
     hourly: weatherData.hourly, 
     daily: weatherData.daily
   };
+
+  // 5. Save the fresh data to localStorage before returning
+  localStorage.setItem(cacheKey, JSON.stringify({
+    data: finalResult,
+    timestamp: Date.now()
+  }));
+
+  return finalResult;
 };
